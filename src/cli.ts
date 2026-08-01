@@ -28,8 +28,9 @@ import { ProjectConfig } from "./types.js";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 async function version(): Promise<string> {
+  // Compiled layout: dist/src/cli.js → package.json is two levels up.
   try {
-    const pkg = JSON.parse(await readTextFile(path.join(__dirname, "..", "package.json")));
+    const pkg = JSON.parse(await readTextFile(path.join(__dirname, "..", "..", "package.json")));
     return pkg.version ?? "0.0.0";
   } catch {
     return "0.0.0";
