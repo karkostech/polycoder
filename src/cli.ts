@@ -390,6 +390,17 @@ async function main(): Promise<number> {
   if (flags.has("no-color")) setColor(false);
   const cwd = process.cwd();
 
+  // `--version` / `--help` arrive as flags, not commands (see parseArgs) —
+  // handle them before the switch or they fall through to the help text.
+  if (command === undefined && flags.has("version")) {
+    console.log(await version());
+    return 0;
+  }
+  if (command === undefined && flags.has("help")) {
+    printHelp();
+    return 0;
+  }
+
   switch (command) {
     case "init":
       return cmdInit(flags, cwd);
