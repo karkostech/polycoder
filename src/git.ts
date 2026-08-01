@@ -3,6 +3,7 @@
  */
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { promises as fs } from "node:fs";
 import path from "node:path";
 import { pathExists } from "./fsutil.js";
 
@@ -20,6 +21,8 @@ export class GitError extends Error {
 export interface GitRunResult {
   stdout: string;
   stderr: string;
+  /** Process exit code — 0 on success. */
+  code: number;
 }
 
 export async function git(args: string[], cwd: string, opts?: { allowFail?: boolean }): Promise<GitRunResult> {
@@ -29,11 +32,13 @@ export async function git(args: string[], cwd: string, opts?: { allowFail?: bool
       maxBuffer: 32 * 1024 * 1024,
       env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
     });
-    return { stdout: stdout.toString(), stderr: stderr.toString() };
+    return { stdout: stdout.toString(), stderr: stderr.toString(), code: 0 };
   } catch (err) {
-    const e = err as { stderr?: string | Buffer; message?: string };
+    const e = err as { stdout?: string | Buffer; stderr?: string | Buffer; message?: string; code?: number };
     const stderr = e.stderr?.toString() ?? e.message ?? "unknown git error";
-    if (opts?.allowFail) return { stdout: "", stderr };
+    if (opts?.allowFail) {
+      return { stdout: e.stdout?.toString() ?? "", stderr, code: typeof e.code === "number" ? e.code : 1 };
+    }
     throw new GitError(`git ${args.join(" ")} failed: ${stderr.trim()}`, stderr);
   }
 }
@@ -56,6 +61,23 @@ export async function isInsideRepo(cwd: string): Promise<boolean> {
 export async function ensureRepo(cwd: string): Promise<string> {
   if (!(await isInsideRepo(cwd))) {
     await git(["init", "-b", "main"], cwd);
+  }
+  // Keep polycoder's internal worktrees out of commits, even when the project
+  // has no .gitignore entry for them. Uses the repo-local exclude file so the
+  // user's own .gitignore is never touched. Without this, `git add -A` records
+  // the live worktrees as gitlink entries.
+  const gitDirRaw = (await git(["rev-parse", "--git-dir"], cwd)).stdout.trim();
+  const gitDir = path.isAbsolute(gitDirRaw) ? gitDirRaw : path.join(cwd, gitDirRaw);
+  const excludePath = path.join(gitDir, "info", "exclude");
+  const excludeLine = ".agents/worktrees/";
+  try {
+    const existing = await fs.readFile(excludePath, "utf8").catch(() => "");
+    if (!existing.split("\n").some((l) => l.trim() === excludeLine)) {
+      await fs.mkdir(path.dirname(excludePath), { recursive: true });
+      await fs.appendFile(excludePath, `\n# polycoder internals\n${excludeLine}\n`, "utf8");
+    }
+  } catch {
+    // Non-fatal: worst case the worktree gitlinks get committed.
   }
   // Ensure an initial commit exists so branches/worktrees can be created.
   const hasCommit = await git(["rev-parse", "--verify", "HEAD"], cwd, { allowFail: true });
@@ -113,8 +135,11 @@ export interface MergeOutcome {
 
 /** Merge `branch` into the current branch of `cwd`. Never auto-commits conflicted state. */
 export async function mergeBranch(cwd: string, branch: string): Promise<MergeOutcome> {
+  // Identity flags: `git merge --no-commit` still validates the committer
+  // ident on several git versions and dies without one (e.g. fresh CI runners
+  // with no global git config). Never rely on ambient git config.
   const r = await git(
-    ["merge", "--no-ff", "--no-commit", branch],
+    ["-c", "user.name=polycoder", "-c", "user.email=polycoder@local", "merge", "--no-ff", "--no-commit", branch],
     cwd,
     { allowFail: true },
   );
@@ -125,6 +150,11 @@ export async function mergeBranch(cwd: string, branch: string): Promise<MergeOut
   const stderr = (r.stderr ?? "").toLowerCase();
   if (stderr.includes("conflict")) {
     return { ok: false, conflictedFiles: conflicts };
+  }
+  // A non-zero exit without conflicts is a hard failure (bad ref, missing
+  // ident, unrelated histories…) — never mask it as a clean merge.
+  if (r.code !== 0) {
+    throw new GitError(`git merge ${branch} failed: ${r.stderr.trim()}`, r.stderr);
   }
   return { ok: true, conflictedFiles: [] };
 }
