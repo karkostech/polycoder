@@ -107,14 +107,20 @@ export async function orchestrate(cfg: ProjectConfig, opts: OrchestratorOptions)
 
   // ── Land the result on the base branch ────────────────────────────────────
   if (!run.integrator.error) {
-    const outcome = await mergeBranch(opts.projectRoot, integrationBranch);
-    if (outcome.ok) {
-      await commitAll(opts.projectRoot, `polycoder run ${runId}: ${cfg.task.slice(0, 60)}`);
-      run.success = true;
-      emit(`result landed on "${baseBranch}"`);
-    } else {
-      emit(`WARNING: landing merge on "${baseBranch}" conflicted — result stays on branch ${integrationBranch}`);
-      await abortMerge(opts.projectRoot);
+    try {
+      const outcome = await mergeBranch(opts.projectRoot, integrationBranch);
+      if (outcome.ok) {
+        await commitAll(opts.projectRoot, `polycoder run ${runId}: ${cfg.task.slice(0, 60)}`);
+        run.success = true;
+        emit(`result landed on "${baseBranch}"`);
+      } else {
+        emit(`WARNING: landing merge on "${baseBranch}" conflicted — result stays on branch ${integrationBranch}`);
+        await abortMerge(opts.projectRoot);
+        run.success = false;
+      }
+    } catch (err) {
+      emit(`ERROR: landing merge failed: ${(err as Error).message} — result stays on branch ${integrationBranch}`);
+      await abortMerge(opts.projectRoot).catch(() => {});
       run.success = false;
     }
   }
