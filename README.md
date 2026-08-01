@@ -49,8 +49,12 @@ git clone https://github.com/karkostech/polycoder.git
 cd polycoder
 npm install
 npm run build
-npm link        # puts the `polycoder` command on your PATH
+npm link
 ```
+
+The last command, `npm link`, puts the `polycoder` command on your PATH. Type it **exactly as shown — with no arguments**:
+
+> ⚠️ **Do not run `npm link polycoder` or `npm install -g polycoder`.** The name `polycoder` on the npm registry belongs to a different, unrelated package — installing it will fail (and it is not this project). PolyCoder is installed **from source** (this repo), not from npm.
 
 Verify the installation:
 
@@ -207,10 +211,12 @@ PolyCoder validates every op (paths are confined to the project and to the role'
 ## Development
 
 ```sh
-npm run build     # tsc
-npm test          # build + 27 unit/e2e tests (node:test, fully offline)
+npm run build
+npm test
 npm run cli -- --help
 ```
+
+`npm run build` compiles TypeScript to `dist/`; `npm test` builds and runs the 27 unit/e2e tests (node:test, fully offline).
 
 ## License
 
