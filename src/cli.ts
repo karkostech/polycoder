@@ -2,15 +2,16 @@
 /**
  * ChalkCode CLI — multi-model AI coding orchestrator.
  *
- * Commands:
- *   chalkcode init [--demo] [--mode single|multi] [--task "..."]
- *   chalkcode run [--keep-worktrees] [--no-color]
- *   chalkcode doctor
- *   chalkcode report
+ *   chalkcode setup      once: default provider/model + API keys (global)
+ *   chalkcode init       interactive wizard → agents.config.json + .env
+ *   chalkcode run        plan → parallel build → integrate → report
+ *   chalkcode doctor     check git / config / API keys
+ *   chalkcode report     print the latest run report
  */
 import path from "node:path";
 import { promises as fs } from "node:fs";
 import { fileURLToPath } from "node:url";
+import readline from "node:readline/promises";
 import {
   CONFIG_FILE,
   ConfigError,
@@ -24,6 +25,8 @@ import { orchestrate } from "./orchestrator.js";
 import { isGitInstalled, isInsideRepo } from "./git.js";
 import { pathExists, readTextFile, writeJsonFile, writeTextFile } from "./fsutil.js";
 import { ProjectConfig } from "./types.js";
+import { buildMockConfig, buildTemplateConfig, runInitWizard, PROVIDER_PRESETS, AskFn } from "./wizard.js";
+import { applyUserKeysToEnv, loadUserConfig, maskKey, saveUserConfig, userConfigPath } from "./userconfig.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -63,137 +66,33 @@ function parseArgs(argv: string[]): ParsedArgs {
   return { command, flags };
 }
 
-function demoConfig(task?: string): ProjectConfig {
-  return {
-    projectName: "chalkcode-demo",
-    mode: "multi",
-    providers: [{ name: "mock", apiStyle: "mock", baseUrl: "" }],
-    roles: [
-      {
-        name: "frontend",
-        description: "Owns the web UI — everything under web/.",
-        scope: ["web/"],
-        model: "mock-frontend",
-        provider: "mock",
-      },
-      {
-        name: "backend",
-        description: "Owns the HTTP API server — everything under server/.",
-        scope: ["server/"],
-        model: "mock-backend",
-        provider: "mock",
-      },
-      {
-        name: "database",
-        description: "Owns persistence — everything under db/.",
-        scope: ["db/"],
-        model: "mock-db",
-        provider: "mock",
-      },
-    ],
-    integrator: { model: "mock-integrator", provider: "mock" },
-    budgets: { maxTotalTokens: 1_000_000 },
-    concurrency: 3,
-    task:
-      task ??
-      "Build a minimal but working todo web app: a web UI to list/add/toggle items, an HTTP JSON API, and a persistence layer. Vanilla stack, zero npm dependencies.",
-  };
-}
-
-function templateConfig(mode: "single" | "multi", task?: string): ProjectConfig {
-  const base: ProjectConfig = {
-    projectName: "my-project",
-    mode,
-    providers: [
-      {
-        name: "openai",
-        apiStyle: "openai",
-        baseUrl: "https://api.openai.com/v1",
-        apiKeyEnv: "OPENAI_API_KEY",
-      },
-      {
-        name: "anthropic",
-        apiStyle: "anthropic",
-        baseUrl: "https://api.anthropic.com",
-        apiKeyEnv: "ANTHROPIC_API_KEY",
-      },
-      {
-        name: "moonshot",
-        apiStyle: "openai",
-        baseUrl: "https://api.moonshot.ai/v1",
-        apiKeyEnv: "MOONSHOT_API_KEY",
-      },
-    ],
-    roles: [],
-    integrator: {},
-    budgets: {
-      maxTokensPerRole: 400_000,
-      maxTotalTokens: 2_000_000,
-      pricing: {},
-    },
-    concurrency: 3,
-    task: task ?? "Describe what you want the agents to build.",
-  };
-
-  if (mode === "single") {
-    base.defaultProvider = "openai";
-    base.defaultModel = "gpt-5";
-    base.roles = [
-      { name: "frontend", description: "Owns the web UI under web/.", scope: ["web/"] },
-      { name: "backend", description: "Owns the API server under server/.", scope: ["server/"] },
-      { name: "database", description: "Owns persistence under db/.", scope: ["db/"] },
-    ];
-  } else {
-    base.roles = [
-      {
-        name: "frontend",
-        description: "Owns the web UI under web/.",
-        scope: ["web/"],
-        model: "gpt-5",
-        provider: "openai",
-      },
-      {
-        name: "backend",
-        description: "Owns the API server under server/.",
-        scope: ["server/"],
-        model: "claude-sonnet-4-5",
-        provider: "anthropic",
-      },
-      {
-        name: "database",
-        description: "Owns persistence under db/.",
-        scope: ["db/"],
-        model: "kimi-k2",
-        provider: "moonshot",
-      },
-    ];
-    base.integrator = { model: "gpt-5", provider: "openai" };
-  }
-  return base;
-}
-
 const ENV_EXAMPLE = `# ChalkCode API keys — one per provider you use.
 # This file is gitignored. Never commit real keys.
+# Tip: "chalkcode setup" stores them globally so you only paste them once.
 OPENAI_API_KEY=
 ANTHROPIC_API_KEY=
 MOONSHOT_API_KEY=
 `;
 
-async function cmdInit(flags: Map<string, string | boolean>, cwd: string): Promise<number> {
-  const target = path.join(cwd, CONFIG_FILE);
-  if (await pathExists(target)) {
-    log.error(`${CONFIG_FILE} already exists — delete it first if you want to re-init.`);
-    return 1;
-  }
+/** Interactive question helper (readline). Returns a fn compatible with AskFn. */
+function makeAsk(): { ask: AskFn; close: () => void } {
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  return { ask: (q) => rl.question(q), close: () => rl.close() };
+}
 
-  const demo = flags.has("demo");
-  const mode = (flags.get("mode") === "single" ? "single" : "multi") as "single" | "multi";
-  const task = typeof flags.get("task") === "string" ? (flags.get("task") as string) : undefined;
-  const cfg = demo ? demoConfig(task) : templateConfig(mode, task);
+/** Merge keys into the project .env without duplicating or clobbering. */
+async function writeEnvFile(cwd: string, keys: Record<string, string>): Promise<void> {
+  const envPath = path.join(cwd, ".env");
+  const existing = (await pathExists(envPath)) ? await readTextFile(envPath) : "";
+  const lines = Object.entries(keys)
+    .filter(([k]) => !new RegExp(`^${k}=`, "m").test(existing))
+    .map(([k, v]) => `${k}=${v}`);
+  if (lines.length === 0) return;
+  const prefix = existing && !existing.endsWith("\n") ? "\n" : "";
+  await fs.appendFile(envPath, `${existing ? prefix : ""}${lines.join("\n")}\n`, "utf8");
+}
 
-  await writeJsonFile(target, cfg);
-  await writeTextFile(path.join(cwd, ".env.example"), ENV_EXAMPLE);
-
+async function writeGitignore(cwd: string): Promise<void> {
   const gitignore = path.join(cwd, ".gitignore");
   const ignoreLines = [".agents/worktrees/", ".env"];
   if (await pathExists(gitignore)) {
@@ -203,18 +102,109 @@ async function cmdInit(flags: Map<string, string | boolean>, cwd: string): Promi
   } else {
     await writeTextFile(gitignore, ignoreLines.join("\n") + "\n");
   }
+}
 
-  if (demo) {
-    log.ok(`Created ${CONFIG_FILE} (demo mode — offline mock provider, no API keys needed).`);
-    log.dim("Run it with:  chalkcode run");
-  } else {
-    log.ok(`Created ${CONFIG_FILE} (${mode} mode) and .env.example.`);
-    log.dim("Next steps:");
-    log.dim("  1. Copy .env.example to .env and fill in your API keys");
-    log.dim(`  2. Edit ${CONFIG_FILE}: models, roles, scopes, task`);
-    log.dim("  3. chalkcode run");
+/** Persist a finished wizard/template result: config + .env + .env.example + .gitignore. */
+async function writeProjectFiles(cwd: string, cfg: ProjectConfig, keys: Record<string, string>): Promise<void> {
+  await writeJsonFile(path.join(cwd, CONFIG_FILE), cfg);
+  await writeEnvFile(cwd, keys);
+  await writeTextFile(path.join(cwd, ".env.example"), ENV_EXAMPLE);
+  await writeGitignore(cwd);
+}
+
+async function cmdInit(flags: Map<string, string | boolean>, cwd: string): Promise<number> {
+  const target = path.join(cwd, CONFIG_FILE);
+  if (await pathExists(target)) {
+    log.error(`${CONFIG_FILE} already exists — delete it first if you want to re-init.`);
+    return 1;
   }
-  return 0;
+
+  const task = typeof flags.get("task") === "string" ? (flags.get("task") as string) : undefined;
+  const projectName = path.basename(cwd);
+
+  // Hidden, CI/tests-only: `init --mock` (legacy alias: `--demo`). Not in --help.
+  if (flags.has("mock") || flags.has("demo")) {
+    await writeProjectFiles(cwd, buildMockConfig(projectName, task), {});
+    log.ok(`Created ${CONFIG_FILE} (mock provider — internal test/CI path).`);
+    return 0;
+  }
+
+  // Non-interactive: flags given or no TTY → template config, user edits keys after.
+  const modeFlag = flags.get("mode");
+  if (modeFlag || task || !process.stdin.isTTY) {
+    const mode = modeFlag === "single" ? "single" : "multi";
+    await writeProjectFiles(cwd, buildTemplateConfig(mode, projectName, task), {});
+    log.ok(`Created ${CONFIG_FILE} (${mode} mode) and .env.example.`);
+    log.dim("Next: put your API keys in .env (or run " + fmt.bold("chalkcode setup") + "), then " + fmt.bold("chalkcode run"));
+    return 0;
+  }
+
+  // Interactive wizard — the default path.
+  const { ask, close } = makeAsk();
+  try {
+    const userCfg = await loadUserConfig();
+    log.section("New ChalkCode project");
+    const result = await runInitWizard({ ask, print: (m) => console.log(m), userCfg, projectName });
+    await writeProjectFiles(cwd, result.cfg, result.env);
+
+    const reusedList = Object.values(result.reused);
+    log.ok(`Created ${CONFIG_FILE} (${result.cfg.mode} mode)${Object.keys(result.env).length ? " + .env with your API key(s)" : ""}.`);
+    for (const [k, masked] of Object.entries(result.reused)) log.dim(`  reused ${k} (${masked})`);
+    if (reusedList.length === 0 && Object.keys(result.env).length > 0) {
+      log.dim(`  tip: run ${fmt.bold("chalkcode setup")} once to reuse these keys in every project`);
+    }
+    log.dim(`Run it with:  ${fmt.bold("chalkcode run")}`);
+    return 0;
+  } finally {
+    close();
+  }
+}
+
+async function cmdSetup(): Promise<number> {
+  if (!process.stdin.isTTY) {
+    log.error("setup is interactive — run it in a terminal.");
+    return 1;
+  }
+  const { ask, close } = makeAsk();
+  try {
+    const userCfg = await loadUserConfig();
+    log.section("ChalkCode setup (global defaults)");
+    log.dim(`Saved to ${userConfigPath()} — init/run reuse these so you paste keys only once.`);
+
+    const presetNames = PROVIDER_PRESETS.map((p) => p.name);
+    const defIdx = Math.max(0, presetNames.indexOf(userCfg.defaultProvider ?? "openai"));
+    console.log("Default provider:");
+    PROVIDER_PRESETS.forEach((p, i) => console.log(`  ${i + 1}) ${p.label}${i === defIdx ? "  (default)" : ""}`));
+    const a = (await ask(`choose 1-${PROVIDER_PRESETS.length} [${defIdx + 1}]: `)).trim();
+    const idx = a === "" ? defIdx : Math.min(PROVIDER_PRESETS.length, Math.max(1, Number(a) || defIdx + 1)) - 1;
+    const preset = PROVIDER_PRESETS[idx]!;
+
+    const prev = userCfg.providers[preset.name];
+    const modelA = (await ask(`Default model [${prev?.model ?? preset.defaultModel}]: `)).trim();
+    const model = modelA || prev?.model || preset.defaultModel;
+
+    let apiKey = prev?.apiKey ?? "";
+    if (process.env[preset.apiKeyEnv]) {
+      log.dim(`  ${preset.apiKeyEnv} found in your environment (${maskKey(process.env[preset.apiKeyEnv]!)}) — keeping it`);
+      apiKey = process.env[preset.apiKeyEnv]!;
+    } else {
+      const k = (await ask(`${preset.apiKeyEnv}${apiKey ? ` [keep ${maskKey(apiKey)}]` : ""}: `)).trim();
+      if (k) apiKey = k;
+      if (!apiKey) {
+        log.error("no API key given — nothing saved.");
+        return 1;
+      }
+    }
+
+    userCfg.defaultProvider = preset.name;
+    userCfg.defaultModel = model;
+    userCfg.providers[preset.name] = { apiKeyEnv: preset.apiKeyEnv, apiKey, model };
+    await saveUserConfig(userCfg);
+    log.ok(`Saved. ${preset.label} / ${model} is now your default — ${fmt.bold("chalkcode init")} will pre-fill it.`);
+    return 0;
+  } finally {
+    close();
+  }
 }
 
 async function cmdDoctor(cwd: string): Promise<number> {
@@ -234,6 +224,13 @@ async function cmdDoctor(cwd: string): Promise<number> {
     log.warn("current directory is not a git repository yet — one will be created on first run.");
   }
 
+  const userCfg = await loadUserConfig();
+  if (Object.keys(userCfg.providers).length > 0) {
+    log.ok(`global setup found (${userConfigPath()}) — default: ${userCfg.defaultProvider}/${userCfg.defaultModel}`);
+  } else {
+    log.dim("no global setup yet (optional): run chalkcode setup to store defaults + keys once");
+  }
+
   if (!(await pathExists(path.join(cwd, CONFIG_FILE)))) {
     log.error(`no ${CONFIG_FILE} found — run "chalkcode init".`);
     return 1;
@@ -242,6 +239,7 @@ async function cmdDoctor(cwd: string): Promise<number> {
   let cfg;
   try {
     await loadEnvFile(cwd);
+    applyUserKeysToEnv(userCfg);
     cfg = await loadConfig(cwd);
     log.ok(`${CONFIG_FILE} is valid (mode: ${cfg.mode}, roles: ${cfg.roles.map((r) => r.name).join(", ")})`);
   } catch (err) {
@@ -278,13 +276,34 @@ async function cmdDoctor(cwd: string): Promise<number> {
 
 async function cmdRun(flags: Map<string, string | boolean>, cwd: string): Promise<number> {
   await loadEnvFile(cwd);
+  applyUserKeysToEnv(await loadUserConfig());
 
   let cfg;
   try {
     cfg = await loadConfig(cwd);
   } catch (err) {
-    log.error((err as Error).message);
-    return 1;
+    // Plug & play: no config in an interactive terminal → run the wizard inline.
+    if (err instanceof ConfigError && !(await pathExists(path.join(cwd, CONFIG_FILE))) && process.stdin.isTTY) {
+      log.dim(`no ${CONFIG_FILE} here — let's create one.`);
+      const { ask, close } = makeAsk();
+      try {
+        const result = await runInitWizard({
+          ask,
+          print: (m) => console.log(m),
+          userCfg: await loadUserConfig(),
+          projectName: path.basename(cwd),
+        });
+        await writeProjectFiles(cwd, result.cfg, result.env);
+        log.ok(`Created ${CONFIG_FILE} — starting the run.`);
+        for (const [k, v] of Object.entries(result.env)) process.env[k] ??= v;
+        cfg = result.cfg;
+      } finally {
+        close();
+      }
+    } else {
+      log.error((err as Error).message);
+      return 1;
+    }
   }
 
   if (cfg.providers.some((p) => p.apiStyle === "mock")) {
@@ -295,7 +314,7 @@ async function cmdRun(flags: Map<string, string | boolean>, cwd: string): Promis
   const missing = missingApiKeys(cfg);
   if (missing.length > 0) {
     log.error(`Missing API keys: ${missing.join(", ")}`);
-    log.dim("Add them to .env or your environment, or use apiStyle \"mock\" for an offline demo.");
+    log.dim("Add them to .env, run chalkcode setup, or export them in your environment.");
     return 1;
   }
 
@@ -364,28 +383,21 @@ async function cmdReport(cwd: string): Promise<number> {
 function printHelp(): void {
   console.log(`chalkcode — multi-model AI coding orchestrator
 
-Usage:
-  chalkcode init [--demo] [--mode single|multi] [--task "what to build"]
-  chalkcode run [--keep-worktrees]
-  chalkcode doctor
-  chalkcode report
-  chalkcode --help | --version
+Get started (3 steps):
+  chalkcode setup     once: default provider/model + API key (global, optional)
+  chalkcode init      in your project folder — answer a few questions
+  chalkcode run       agents build in parallel; result lands as one commit
 
-How it works:
-  1. init writes agents.config.json (strategy: one model for everything,
-     or different models per role) and .env.example for your API keys.
-  2. run executes three phases:
-     plan     — each role declares interface contracts on a shared
-                markdown blackboard (.agents/) so agents never have to
-                read each other's code
-     build    — roles work in PARALLEL, each in its own git worktree
-     integrate — one model merges everything, resolves conflicts, wires
-                the parts together and you get a full markdown report.
+More:
+  chalkcode doctor    check git / config / API keys
+  chalkcode report    print the latest run report
+  chalkcode --version
 
 Flags:
-  --demo             offline mock provider — no API keys needed
-  --keep-worktrees   keep agent worktrees+branches for debugging
-  --no-color         disable ANSI colors
+  --task "…"          pre-fill the task (non-interactive init)
+  --mode single|multi non-interactive init with template defaults
+  --keep-worktrees    keep agent worktrees+branches for debugging
+  --no-color          disable ANSI colors
 `);
 }
 
@@ -406,6 +418,8 @@ async function main(): Promise<number> {
   }
 
   switch (command) {
+    case "setup":
+      return cmdSetup();
     case "init":
       return cmdInit(flags, cwd);
     case "run":

@@ -1,6 +1,6 @@
 {
   "name": "chalkcode",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Multi-model AI coding orchestrator: parallel CLI agents on git worktrees with a shared markdown blackboard, an integrator pass and a final build report.",
   "license": "MIT",
   "type": "module",
