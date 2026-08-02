@@ -2,7 +2,7 @@
 /**
  * ChalkCode CLI — multi-model AI coding orchestrator.
  *
- *   chalkcode setup      once: default provider/model + API keys (global)
+ *   chalkcode setup      once: pick model(s) from the list + paste API keys (global)
  *   chalkcode init       interactive wizard → agents.config.json + .env
  *   chalkcode run        plan → parallel build → integrate → report
  *   chalkcode doctor     check git / config / API keys
@@ -20,12 +20,13 @@ import {
   missingApiKeys,
 } from "./config.js";
 import { fmt, log, setColor } from "./logger.js";
+import { MODELS } from "./models.js";
 import { registerMockResponder } from "./mock.js";
 import { orchestrate } from "./orchestrator.js";
 import { isGitInstalled, isInsideRepo } from "./git.js";
 import { pathExists, readTextFile, writeJsonFile, writeTextFile } from "./fsutil.js";
 import { ProjectConfig } from "./types.js";
-import { buildMockConfig, buildTemplateConfig, runInitWizard, PROVIDER_PRESETS, AskFn } from "./wizard.js";
+import { buildMockConfig, buildTemplateConfig, runInitWizard, pickModel, AskFn, WizardResult } from "./wizard.js";
 import { applyUserKeysToEnv, loadUserConfig, maskKey, saveUserConfig, userConfigPath } from "./userconfig.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -66,13 +67,24 @@ function parseArgs(argv: string[]): ParsedArgs {
   return { command, flags };
 }
 
-const ENV_EXAMPLE = `# ChalkCode API keys — one per provider you use.
+const ENV_EXAMPLE = `# ChalkCode API keys — one per model family you use.
 # This file is gitignored. Never commit real keys.
-# Tip: "chalkcode setup" stores them globally so you only paste them once.
-OPENAI_API_KEY=
-ANTHROPIC_API_KEY=
-MOONSHOT_API_KEY=
+# Tip: "chalkcode setup" stores keys globally so you paste them only once.
+OPENAI_API_KEY=        # GPT
+ANTHROPIC_API_KEY=     # Claude
+GEMINI_API_KEY=        # Gemini
+XAI_API_KEY=           # Grok
+MOONSHOT_API_KEY=      # Kimi
+DEEPSEEK_API_KEY=      # DeepSeek
+DASHSCOPE_API_KEY=     # Qwen
+GLM_API_KEY=           # GLM
 `;
+
+/** "Claude · claude-sonnet-5" for summary panels; falls back to the raw model id. */
+function modelLabel(providerName: string, model: string): string {
+  const fam = MODELS.find((m) => m.id === providerName);
+  return fam ? `${fmt.bold(fam.label)} ${fmt.gray(`· ${model}`)}` : model;
+}
 
 /** Interactive question helper (readline). Returns a fn compatible with AskFn. */
 function makeAsk(): { ask: AskFn; close: () => void } {
@@ -146,18 +158,40 @@ async function cmdInit(flags: Map<string, string | boolean>, cwd: string): Promi
     log.section("New ChalkCode project");
     const result = await runInitWizard({ ask, print: (m) => console.log(m), userCfg, projectName });
     await writeProjectFiles(cwd, result.cfg, result.env);
-
-    const reusedList = Object.values(result.reused);
-    log.ok(`Created ${CONFIG_FILE} (${result.cfg.mode} mode)${Object.keys(result.env).length ? " + .env with your API key(s)" : ""}.`);
-    for (const [k, masked] of Object.entries(result.reused)) log.dim(`  reused ${k} (${masked})`);
-    if (reusedList.length === 0 && Object.keys(result.env).length > 0) {
-      log.dim(`  tip: run ${fmt.bold("chalkcode setup")} once to reuse these keys in every project`);
+    printProjectReady(result);
+    if (Object.keys(result.reused).length === 0 && Object.keys(result.env).length > 0) {
+      log.dim(`tip: run ${fmt.bold("chalkcode setup")} once to store keys globally for every project`);
     }
-    log.dim(`Run it with:  ${fmt.bold("chalkcode run")}`);
     return 0;
   } finally {
     close();
   }
+}
+
+/** The "Project ready" summary panel shown after a wizard run. */
+function printProjectReady(result: WizardResult, footer = "next: chalkcode run"): void {
+  const cfg = result.cfg;
+  const rows: Array<[string, string]> = [
+    ["mode", cfg.mode === "single" ? "one model for everything" : "one model per role"],
+  ];
+  if (cfg.mode === "single") {
+    rows.push(["model", modelLabel(cfg.defaultProvider ?? "", cfg.defaultModel ?? "")]);
+  } else {
+    for (const r of cfg.roles) {
+      rows.push([r.name, modelLabel(r.provider ?? cfg.defaultProvider ?? "", r.model ?? cfg.defaultModel ?? "")]);
+    }
+    if (cfg.integrator.model) {
+      rows.push(["integrator", modelLabel(cfg.integrator.provider ?? "", cfg.integrator.model)]);
+    }
+  }
+  const pasted = Object.keys(result.env).length;
+  const reusedN = Object.keys(result.reused).length;
+  const keyBits: string[] = [];
+  if (pasted > 0) keyBits.push(`${pasted} pasted → .env (gitignored)`);
+  if (reusedN > 0) keyBits.push(`${reusedN} reused from env/global setup`);
+  rows.push(["keys", keyBits.join(" · ") || "none"]);
+  rows.push(["files", `${CONFIG_FILE} · .env.example${pasted ? " · .env" : ""}`]);
+  log.panel("Project ready", rows, footer);
 }
 
 async function cmdSetup(): Promise<number> {
@@ -168,39 +202,40 @@ async function cmdSetup(): Promise<number> {
   const { ask, close } = makeAsk();
   try {
     const userCfg = await loadUserConfig();
-    log.section("ChalkCode setup (global defaults)");
-    log.dim(`Saved to ${userConfigPath()} — init/run reuse these so you paste keys only once.`);
+    log.section("ChalkCode setup");
+    log.dim(`Stored in ${userConfigPath()} — every project reuses these keys, so you paste each key only once.`);
 
-    const presetNames = PROVIDER_PRESETS.map((p) => p.name);
-    const defIdx = Math.max(0, presetNames.indexOf(userCfg.defaultProvider ?? "openai"));
-    console.log("Default provider:");
-    PROVIDER_PRESETS.forEach((p, i) => console.log(`  ${i + 1}) ${p.label}${i === defIdx ? "  (default)" : ""}`));
-    const a = (await ask(`choose 1-${PROVIDER_PRESETS.length} [${defIdx + 1}]: `)).trim();
-    const idx = a === "" ? defIdx : Math.min(PROVIDER_PRESETS.length, Math.max(1, Number(a) || defIdx + 1)) - 1;
-    const preset = PROVIDER_PRESETS[idx]!;
+    for (;;) {
+      const fam = await pickModel(
+        { ask, print: (m) => console.log(m) },
+        "Pick a model:",
+        userCfg.defaultProvider ?? "openai",
+      );
 
-    const prev = userCfg.providers[preset.name];
-    const modelA = (await ask(`Default model [${prev?.model ?? preset.defaultModel}]: `)).trim();
-    const model = modelA || prev?.model || preset.defaultModel;
-
-    let apiKey = prev?.apiKey ?? "";
-    if (process.env[preset.apiKeyEnv]) {
-      log.dim(`  ${preset.apiKeyEnv} found in your environment (${maskKey(process.env[preset.apiKeyEnv]!)}) — keeping it`);
-      apiKey = process.env[preset.apiKeyEnv]!;
-    } else {
-      const k = (await ask(`${preset.apiKeyEnv}${apiKey ? ` [keep ${maskKey(apiKey)}]` : ""}: `)).trim();
-      if (k) apiKey = k;
-      if (!apiKey) {
-        log.error("no API key given — nothing saved.");
-        return 1;
+      const envVar = fam.apiKeyEnv;
+      let apiKey = userCfg.providers[fam.id]?.apiKey ?? "";
+      if (process.env[envVar]) {
+        log.dim(`  ${envVar} found in your environment (${maskKey(process.env[envVar]!)}) — using it`);
+        apiKey = process.env[envVar]!;
+      } else {
+        const k = (await ask(`${fmt.cyan("›")} paste ${envVar}${apiKey ? ` [keep ${maskKey(apiKey)}]` : ""}: `)).trim();
+        if (k) apiKey = k;
+        if (!apiKey) {
+          log.error("no API key given — nothing saved.");
+          return 1;
+        }
       }
-    }
 
-    userCfg.defaultProvider = preset.name;
-    userCfg.defaultModel = model;
-    userCfg.providers[preset.name] = { apiKeyEnv: preset.apiKeyEnv, apiKey, model };
-    await saveUserConfig(userCfg);
-    log.ok(`Saved. ${preset.label} / ${model} is now your default — ${fmt.bold("chalkcode init")} will pre-fill it.`);
+      userCfg.providers[fam.id] = { apiKeyEnv: envVar, apiKey, model: fam.model };
+      userCfg.defaultProvider = fam.id;
+      userCfg.defaultModel = fam.model;
+      await saveUserConfig(userCfg);
+      log.ok(`Saved — ${fmt.bold(fam.label)} (${fam.model}) is now your default and its key works in every project.`);
+
+      const more = (await ask(`${fmt.cyan("›")} store a key for another model too? [y/N]: `)).trim().toLowerCase();
+      if (more !== "y" && more !== "yes") break;
+    }
+    log.dim(`Done. In any project folder: ${fmt.bold("chalkcode run")} — that's it.`);
     return 0;
   } finally {
     close();
@@ -294,7 +329,7 @@ async function cmdRun(flags: Map<string, string | boolean>, cwd: string): Promis
           projectName: path.basename(cwd),
         });
         await writeProjectFiles(cwd, result.cfg, result.env);
-        log.ok(`Created ${CONFIG_FILE} — starting the run.`);
+        printProjectReady(result, "starting the run…");
         for (const [k, v] of Object.entries(result.env)) process.env[k] ??= v;
         cfg = result.cfg;
       } finally {
@@ -383,12 +418,13 @@ async function cmdReport(cwd: string): Promise<number> {
 function printHelp(): void {
   console.log(`chalkcode — multi-model AI coding orchestrator
 
-Get started (3 steps):
-  chalkcode setup     once: default provider/model + API key (global, optional)
-  chalkcode init      in your project folder — answer a few questions
-  chalkcode run       agents build in parallel; result lands as one commit
+Get started (2 steps):
+  chalkcode setup     once: pick a model from the list + paste its API key
+                      GPT · Claude · Gemini · Grok · Kimi · DeepSeek · Qwen · GLM
+  chalkcode run       in your project folder — answer 2 questions, agents build
 
 More:
+  chalkcode init      re-configure the current project (same simple questions)
   chalkcode doctor    check git / config / API keys
   chalkcode report    print the latest run report
   chalkcode --version

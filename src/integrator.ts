@@ -7,6 +7,7 @@ import path from "node:path";
 import { promises as fs } from "node:fs";
 import { Blackboard } from "./blackboard.js";
 import { BudgetTracker, priceOf } from "./budget.js";
+import { chatFull } from "./chatfull.js";
 import { resolveIntegratorModel } from "./config.js";
 import { applyOps, parseAgentOutput } from "./fileops.js";
 import {
@@ -17,7 +18,7 @@ import {
   listChangedFiles,
   mergeBranch,
 } from "./git.js";
-import { chat, ChatOptions } from "./provider.js";
+import { ChatOptions } from "./provider.js";
 import {
   buildConflictResolutionPrompt,
   buildIntegratorSystemPrompt,
@@ -107,7 +108,7 @@ export async function runIntegrator(
           if (content !== undefined) conflicts.push({ path: file, content });
         }
         const boardContext = await ctx.board.contextFor("integrator");
-        const res = await chat(provider, model, [
+        const res = await chatFull(provider, model, [
           { role: "system", content: buildIntegratorSystemPrompt(cfg, model, cfg.integrator.promptExtra) },
           { role: "user", content: buildConflictResolutionPrompt(cfg, conflicts, boardContext) },
         ], ctx.chatOptions ?? {});
@@ -148,7 +149,7 @@ export async function runIntegrator(
 
     // 4. Final integration pass.
     const boardContext = await ctx.board.contextFor("integrator");
-    const res = await chat(provider, model, [
+    const res = await chatFull(provider, model, [
       { role: "system", content: buildIntegratorSystemPrompt(cfg, model, cfg.integrator.promptExtra) },
       {
         role: "user",

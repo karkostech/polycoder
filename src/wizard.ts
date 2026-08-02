@@ -1,66 +1,28 @@
 /**
  * Interactive setup wizard — the "plug & play" core of ChalkCode.
  *
- * `runInitWizard` asks a handful of questions (all with sane defaults, so
- * Enter-Enter-Enter works) and produces a ready-to-run ProjectConfig plus
- * the API keys to persist. The `ask` function is injectable so tests can
- * script the answers.
+ * The flow is deliberately minimal: pick a model from the fixed catalog of
+ * 8 families (src/models.ts), paste its API key, done. No custom providers,
+ * no base URLs, no model-id typing — those were the #1 way to get stuck.
+ * Everything else (providers, budgets, scopes) is derived from the catalog.
+ *
+ * `ask` is injectable so tests can script the answers.
  *
  * Non-interactive fallbacks (CI, scripts): `buildTemplateConfig`.
  * `buildMockConfig` exists ONLY for tests and the CI smoke test — it is not
  * advertised anywhere user-facing.
  */
+import { fmt } from "./logger.js";
+import { MODELS, ModelFamily } from "./models.js";
 import { ProjectConfig, ProviderConfig } from "./types.js";
 import { UserConfig, maskKey } from "./userconfig.js";
 
 export type AskFn = (question: string) => Promise<string>;
 export type PrintFn = (msg: string) => void;
 
-export interface ProviderPreset {
-  name: string;
-  label: string;
-  apiStyle: "openai" | "anthropic";
-  baseUrl: string;
-  apiKeyEnv: string;
-  defaultModel: string;
-}
-
-export const PROVIDER_PRESETS: ProviderPreset[] = [
-  {
-    name: "openai",
-    label: "OpenAI (GPT)",
-    apiStyle: "openai",
-    baseUrl: "https://api.openai.com/v1",
-    apiKeyEnv: "OPENAI_API_KEY",
-    defaultModel: "gpt-5",
-  },
-  {
-    name: "anthropic",
-    label: "Anthropic (Claude)",
-    apiStyle: "anthropic",
-    baseUrl: "https://api.anthropic.com",
-    apiKeyEnv: "ANTHROPIC_API_KEY",
-    defaultModel: "claude-sonnet-4-5",
-  },
-  {
-    name: "moonshot",
-    label: "Moonshot (Kimi)",
-    apiStyle: "openai",
-    baseUrl: "https://api.moonshot.ai/v1",
-    apiKeyEnv: "MOONSHOT_API_KEY",
-    defaultModel: "kimi-k2",
-  },
-];
-
-const DEFAULT_ROLE_SCOPES: Array<{ name: string; description: string; scope: string[] }> = [
-  { name: "frontend", description: "Owns the web UI — everything under web/.", scope: ["web/"] },
-  { name: "backend", description: "Owns the HTTP API server — everything under server/.", scope: ["server/"] },
-  { name: "database", description: "Owns persistence — everything under db/.", scope: ["db/"] },
-];
-
 export interface WizardResult {
   cfg: ProjectConfig;
-  /** API keys collected during the wizard (env var name → key), to persist in .env. */
+  /** API keys pasted during the wizard (env var name → key), to persist in .env. */
   env: Record<string, string>;
   /** Keys reused from env/global config (env var name → masked key) — for display only. */
   reused: Record<string, string>;
@@ -74,97 +36,108 @@ interface WizardDeps {
   projectName: string;
 }
 
-function providerPreset(name: string): ProviderPreset | undefined {
-  return PROVIDER_PRESETS.find((p) => p.name === name);
-}
-
-/** Ask a question with a default shown in brackets; empty answer = default. */
-async function askDefault(ask: AskFn, question: string, def: string): Promise<string> {
-  const a = (await ask(`${question} [${def}]: `)).trim();
-  return a === "" ? def : a;
-}
+const DEFAULT_ROLE_SCOPES: Array<{ name: string; description: string; scope: string[] }> = [
+  { name: "frontend", description: "Owns the web UI — everything under web/.", scope: ["web/"] },
+  { name: "backend", description: "Owns the HTTP API server — everything under server/.", scope: ["server/"] },
+  { name: "database", description: "Owns persistence — everything under db/.", scope: ["db/"] },
+];
 
 /** Ask a multiple-choice question; empty answer = default index. */
 async function askChoice(
   ask: AskFn,
   print: PrintFn,
-  question: string,
-  options: string[],
+  optionCount: number,
   defIdx: number,
 ): Promise<number> {
-  print(question);
-  options.forEach((o, i) => print(`  ${i + 1}) ${o}${i === defIdx ? "  (default)" : ""}`));
   for (;;) {
-    const a = (await ask(`choose 1-${options.length} [${defIdx + 1}]: `)).trim();
+    const a = (await ask(`${fmt.cyan("›")} choose 1-${optionCount} [${defIdx + 1}]: `)).trim();
     if (a === "") return defIdx;
     const n = Number(a);
-    if (Number.isInteger(n) && n >= 1 && n <= options.length) return n - 1;
-    print(`  please enter a number 1-${options.length}`);
+    if (Number.isInteger(n) && n >= 1 && n <= optionCount) return n - 1;
+    print(fmt.yellow(`  please enter a number 1-${optionCount}`));
   }
 }
 
+/** Print the 8-family model list with aligned columns. */
+function printModelList(print: PrintFn, defIdx: number): void {
+  MODELS.forEach((m, i) => {
+    const num = fmt.cyan(`  ${i + 1})`);
+    const label = fmt.bold(m.label.padEnd(9));
+    const detail = fmt.gray(`${m.model} · ${m.vendor}${i === defIdx ? "   (default)" : ""}`);
+    print(`${num} ${label} ${detail}`);
+  });
+}
+
 /**
- * Resolve a provider for one purpose (single-mode default, a role, the
- * integrator). Returns the ProviderConfig, the chosen model, and possibly a
- * newly collected API key. Reuses: (1) key already collected in this wizard,
- * (2) key from the real environment, (3) key from the global user config.
+ * The only question that matters: which model family. Returns the chosen
+ * family from the fixed catalog — there is no "custom" escape hatch.
  */
-async function pickProviderAndModel(
-  deps: WizardDeps,
+export async function pickModel(
+  deps: { ask: AskFn; print?: PrintFn },
   label: string,
-  defaultProviderName: string,
+  defaultId: string,
+): Promise<ModelFamily> {
+  const { ask } = deps;
+  const print = deps.print ?? (() => {});
+  const defIdx = Math.max(0, MODELS.findIndex((m) => m.id === defaultId));
+  print(fmt.bold(label));
+  printModelList(print, defIdx);
+  const idx = await askChoice(ask, print, MODELS.length, defIdx);
+  const fam = MODELS[idx]!;
+  print(`${fmt.green("✔")} ${fmt.bold(fam.label)} ${fmt.gray(`· ${fam.model}`)}`);
+  return fam;
+}
+
+/**
+ * Resolve the API key for a family, in priority order:
+ *   1. already pasted in this wizard (another role uses the same family)
+ *   2. present in the real environment
+ *   3. stored in the global ~/.chalkcode config (used at runtime — NOT
+ *      duplicated into the project .env)
+ *   4. otherwise: ask — paste the key, nothing else.
+ */
+async function ensureKey(
+  deps: WizardDeps,
+  fam: ModelFamily,
   collectedEnv: Record<string, string>,
   reused: Record<string, string>,
-): Promise<{ provider: ProviderConfig; model: string }> {
+): Promise<void> {
   const { ask, userCfg } = deps;
   const print = deps.print ?? (() => {});
+  const envVar = fam.apiKeyEnv;
 
-  // Build the choice list: presets (with the default first if it differs) + custom.
-  const names = PROVIDER_PRESETS.map((p) => p.name);
-  const defPresetIdx = Math.max(0, names.indexOf(defaultProviderName));
-  const idx = await askChoice(
-    ask,
-    print,
-    `${label} — provider:`,
-    [...PROVIDER_PRESETS.map((p) => p.label), "custom (any OpenAI-compatible API)"],
-    defPresetIdx,
-  );
-
-  let provider: ProviderConfig;
-  let defaultModel: string;
-  if (idx < PROVIDER_PRESETS.length) {
-    const preset = PROVIDER_PRESETS[idx]!;
-    provider = { name: preset.name, apiStyle: preset.apiStyle, baseUrl: preset.baseUrl, apiKeyEnv: preset.apiKeyEnv };
-    defaultModel = userCfg.providers[preset.name]?.model ?? preset.defaultModel;
-  } else {
-    const name = await askDefault(ask, "  provider name (short id, e.g. groq)", "custom");
-    const baseUrl = await askDefault(ask, "  base URL", "https://api.example.com/v1");
-    const apiKeyEnv = (await askDefault(ask, "  env var for the API key", `${name.toUpperCase().replace(/[^A-Z0-9]/g, "_")}_API_KEY`));
-    provider = { name, apiStyle: "openai", baseUrl, apiKeyEnv };
-    defaultModel = "model-id";
-  }
-
-  const model = await askDefault(ask, `${label} — model`, defaultModel);
-
-  // API key resolution, in priority order.
-  const envVar = provider.apiKeyEnv!;
-  if (collectedEnv[envVar]) {
-    // already typed in this wizard for another role — silently reuse
-  } else if (process.env[envVar]) {
+  if (collectedEnv[envVar]) return;
+  if (process.env[envVar]) {
     reused[envVar] = maskKey(process.env[envVar]!);
-  } else if (userCfg.providers[provider.name]?.apiKey) {
-    collectedEnv[envVar] = userCfg.providers[provider.name]!.apiKey;
-    reused[envVar] = maskKey(collectedEnv[envVar]!);
-  } else {
-    let key = "";
-    for (;;) {
-      key = (await ask(`${label} — API key (${envVar}, stored in .env, never committed): `)).trim();
-      if (key) break;
-      print("  a key is required for this provider (or press Ctrl+C and set the env var yourself)");
-    }
-    collectedEnv[envVar] = key;
+    print(fmt.gray(`  key: ${envVar} found in your environment (${reused[envVar]})`));
+    return;
   }
-  return { provider, model };
+  const globalEntry = userCfg.providers[fam.id];
+  if (globalEntry?.apiKey) {
+    reused[envVar] = maskKey(globalEntry.apiKey);
+    print(fmt.gray(`  key: ${envVar} reused from global setup (${reused[envVar]})`));
+    return;
+  }
+  for (;;) {
+    const key = (await ask(`${fmt.cyan("›")} paste ${envVar} (stored in .env, never committed): `)).trim();
+    if (key) {
+      collectedEnv[envVar] = key;
+      return;
+    }
+    print(fmt.yellow("  a key is required (or press Ctrl+C and set the env var yourself)"));
+  }
+}
+
+function providerOf(fam: ModelFamily): ProviderConfig {
+  const p: ProviderConfig = {
+    name: fam.id,
+    apiStyle: fam.apiStyle,
+    baseUrl: fam.baseUrl,
+    apiKeyEnv: fam.apiKeyEnv,
+    maxOutput: fam.maxOutput,
+  };
+  if (fam.maxTokensParam) p.maxTokensParam = fam.maxTokensParam;
+  return p;
 }
 
 /** The full interactive init wizard. */
@@ -176,27 +149,22 @@ export async function runInitWizard(deps: WizardDeps): Promise<WizardResult> {
 
   const task = await (async () => {
     for (;;) {
-      const t = (await ask("What should the agents build? ")).trim();
+      const t = (await ask(`${fmt.cyan("›")} what should the agents build? `)).trim();
       if (t) return t;
-      print("  describe the task in one or two sentences — this is what the agents implement.");
+      print(fmt.yellow("  describe the task in one or two sentences — this is what the agents implement."));
     }
   })();
 
-  const strategyIdx = await askChoice(
-    ask,
-    print,
-    "Which models should build it?",
-    [
-      "one model for everything (still parallel — one agent per role)",
-      "different model per role (frontend / backend / database / integrator)",
-    ],
-    0,
-  );
+  print(fmt.bold("Which models should build it?"));
+  print(`  ${fmt.cyan("1)")} one model for everything ${fmt.gray("— still parallel, one agent per role (default)")}`);
+  print(`  ${fmt.cyan("2)")} different model per role ${fmt.gray("— frontend / backend / database / integrator")}`);
+  const strategyIdx = await askChoice(ask, print, 2, 0);
   const mode = strategyIdx === 0 ? "single" : "multi";
 
-  const defProvider = userCfg.defaultProvider ?? "openai";
   const providers = new Map<string, ProviderConfig>();
-  const addProvider = (p: ProviderConfig) => providers.set(p.name, p);
+  const addProvider = (fam: ModelFamily) => {
+    if (!providers.has(fam.id)) providers.set(fam.id, providerOf(fam));
+  };
 
   const cfg: ProjectConfig = {
     projectName: deps.projectName,
@@ -209,21 +177,26 @@ export async function runInitWizard(deps: WizardDeps): Promise<WizardResult> {
     task,
   };
 
+  let lastId = userCfg.defaultProvider ?? "openai";
   if (mode === "single") {
-    const { provider, model } = await pickProviderAndModel(deps, "default model", defProvider, collectedEnv, reused);
-    addProvider(provider);
-    cfg.defaultProvider = provider.name;
-    cfg.defaultModel = model;
+    const fam = await pickModel(deps, "Pick a model — it builds everything:", lastId);
+    await ensureKey(deps, fam, collectedEnv, reused);
+    addProvider(fam);
+    cfg.defaultProvider = fam.id;
+    cfg.defaultModel = fam.model;
     cfg.roles = DEFAULT_ROLE_SCOPES.map((r) => ({ ...r }));
   } else {
     for (const roleDef of DEFAULT_ROLE_SCOPES) {
-      const { provider, model } = await pickProviderAndModel(deps, roleDef.name, defProvider, collectedEnv, reused);
-      addProvider(provider);
-      cfg.roles.push({ ...roleDef, model, provider: provider.name });
+      const fam = await pickModel(deps, `Pick a model — ${roleDef.name} (${roleDef.scope[0]}):`, lastId);
+      await ensureKey(deps, fam, collectedEnv, reused);
+      addProvider(fam);
+      cfg.roles.push({ ...roleDef, model: fam.model, provider: fam.id });
+      lastId = fam.id;
     }
-    const integ = await pickProviderAndModel(deps, "integrator (merges + wires everything)", defProvider, collectedEnv, reused);
-    addProvider(integ.provider);
-    cfg.integrator = { model: integ.model, provider: integ.provider.name };
+    const fam = await pickModel(deps, "Pick a model — integrator (merges + wires everything):", lastId);
+    await ensureKey(deps, fam, collectedEnv, reused);
+    addProvider(fam);
+    cfg.integrator = { model: fam.model, provider: fam.id };
   }
   cfg.providers = [...providers.values()];
   return { cfg, env: collectedEnv, reused };
@@ -231,15 +204,11 @@ export async function runInitWizard(deps: WizardDeps): Promise<WizardResult> {
 
 /** Non-interactive init (scripts, CI, `--mode` + `--task` flags). */
 export function buildTemplateConfig(mode: "single" | "multi", projectName: string, task?: string): ProjectConfig {
+  const byId = (id: string) => providerOf(MODELS.find((m) => m.id === id)!);
   const base: ProjectConfig = {
     projectName,
     mode,
-    providers: PROVIDER_PRESETS.map((p) => ({
-      name: p.name,
-      apiStyle: p.apiStyle,
-      baseUrl: p.baseUrl,
-      apiKeyEnv: p.apiKeyEnv,
-    })),
+    providers: [byId("openai"), byId("anthropic"), byId("moonshot")],
     roles: [],
     integrator: {},
     budgets: { maxTokensPerRole: 400_000, maxTotalTokens: 2_000_000, pricing: {} },
@@ -248,15 +217,15 @@ export function buildTemplateConfig(mode: "single" | "multi", projectName: strin
   };
   if (mode === "single") {
     base.defaultProvider = "openai";
-    base.defaultModel = "gpt-5";
+    base.defaultModel = MODELS[0]!.model;
     base.roles = DEFAULT_ROLE_SCOPES.map((r) => ({ ...r }));
   } else {
-    base.roles = DEFAULT_ROLE_SCOPES.map((r, i) => ({
-      ...r,
-      model: PROVIDER_PRESETS[i]!.defaultModel,
-      provider: PROVIDER_PRESETS[i]!.name,
-    }));
-    base.integrator = { model: "gpt-5", provider: "openai" };
+    const picks = ["openai", "anthropic", "moonshot"];
+    base.roles = DEFAULT_ROLE_SCOPES.map((r, i) => {
+      const fam = MODELS.find((m) => m.id === picks[i])!;
+      return { ...r, model: fam.model, provider: fam.id };
+    });
+    base.integrator = { model: MODELS[0]!.model, provider: "openai" };
   }
   return base;
 }

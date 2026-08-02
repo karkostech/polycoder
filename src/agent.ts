@@ -9,6 +9,7 @@
  */
 import { Blackboard } from "./blackboard.js";
 import { BudgetTracker, priceOf } from "./budget.js";
+import { chatFull } from "./chatfull.js";
 import { resolveRoleModel } from "./config.js";
 import { OUTPUT_PROTOCOL, applyOps, parseAgentOutput } from "./fileops.js";
 import { addWorktree, branchFor, commitAll, worktreeDirFor } from "./git.js";
@@ -107,7 +108,9 @@ export async function runBuildPhase(
     const boardContext = await ctx.board.contextFor(role.name);
     const user = buildRoleUserPrompt(cfg, role, boardContext);
 
-    const res = await chat(provider, model, [
+    // chatFull: when the model hits the output cap mid-JSON, it continues
+    // where it stopped instead of failing the whole role with "unbalanced".
+    const res = await chatFull(provider, model, [
       { role: "system", content: system },
       { role: "user", content: user },
     ], ctx.chatOptions ?? {});
