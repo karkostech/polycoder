@@ -24,7 +24,7 @@ export interface ChatOptions {
   onRetry?: (attempt: number, waitMs: number, reason: string) => void;
 }
 
-const DEFAULT_TIMEOUT_MS = 180_000;
+const DEFAULT_TIMEOUT_MS = 600_000;
 const MAX_ATTEMPTS = 4;
 
 function sleep(ms: number): Promise<void> {
@@ -85,13 +85,15 @@ async function openAiChat(
   opts: ChatOptions,
 ): Promise<ChatResult> {
   const url = `${provider.baseUrl.replace(/\/+$/, "")}/chat/completions`;
+  const cap = opts.maxTokens ?? provider.maxOutput;
+  const capParam = provider.maxTokensParam ?? "max_completion_tokens";
   const { status, json } = await postJson(
     url,
     { authorization: `Bearer ${apiKey}` },
     {
       model,
       messages,
-      ...(opts.maxTokens ? { max_completion_tokens: opts.maxTokens } : {}),
+      ...(cap ? { [capParam]: cap } : {}),
       ...(opts.temperature !== undefined ? { temperature: opts.temperature } : {}),
     },
     opts.timeoutMs ?? DEFAULT_TIMEOUT_MS,
@@ -119,7 +121,7 @@ async function openAiChat(
     inputTokens: typeof u.prompt_tokens === "number" ? u.prompt_tokens : 0,
     outputTokens: typeof u.completion_tokens === "number" ? u.completion_tokens : 0,
   };
-  return { text: content, usage };
+  return { text: content, usage, truncated: choices?.[0]?.finish_reason === "length" };
 }
 
 async function anthropicChat(
@@ -140,7 +142,7 @@ async function anthropicChat(
     { "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
     {
       model,
-      max_tokens: opts.maxTokens ?? 8192,
+      max_tokens: opts.maxTokens ?? provider.maxOutput ?? 16_384,
       ...(system ? { system } : {}),
       messages: convo,
       ...(opts.temperature !== undefined ? { temperature: opts.temperature } : {}),
@@ -167,7 +169,7 @@ async function anthropicChat(
     inputTokens: typeof u.input_tokens === "number" ? u.input_tokens : 0,
     outputTokens: typeof u.output_tokens === "number" ? u.output_tokens : 0,
   };
-  return { text, usage };
+  return { text, usage, truncated: root.stop_reason === "max_tokens" };
 }
 
 /** Rough local token estimate — used when an API does not return usage. */

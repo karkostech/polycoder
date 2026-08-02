@@ -15,6 +15,14 @@ export interface ProviderConfig {
   baseUrl: string;
   /** Name of the environment variable holding the API key. Ignored for mock. */
   apiKeyEnv?: string;
+  /**
+   * Which parameter carries the output cap for openai-style APIs.
+   * OpenAI's GPT-5 line needs "max_completion_tokens"; most compatible
+   * providers speak "max_tokens". Default: "max_completion_tokens".
+   */
+  maxTokensParam?: "max_tokens" | "max_completion_tokens";
+  /** Default per-call output cap for this provider (chat options override). */
+  maxOutput?: number;
 }
 
 export interface RoleConfig {
@@ -41,7 +49,7 @@ export interface IntegratorConfig {
 export interface BudgetConfig {
   /** Hard cap of total tokens (input+output) per role agent. 0/undefined = unlimited. */
   maxTokensPerRole?: number;
-  /** Hard cap of total tokens for the whole run. */
+  /** Hard cap of total tokens for the whole run. 0/undefined = unlimited. */
   maxTotalTokens?: number;
   /** Hard cap of estimated USD cost for the whole run (uses config pricing if provided). */
   maxCostUsd?: number;
@@ -80,6 +88,8 @@ export interface Usage {
 export interface ChatResult {
   text: string;
   usage: Usage;
+  /** True when the provider cut the response at the output-token cap. */
+  truncated?: boolean;
 }
 
 /** File operations emitted by an agent, validated then applied to a worktree. */

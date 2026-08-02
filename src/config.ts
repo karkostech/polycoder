@@ -66,7 +66,18 @@ function validateProvider(v: unknown, idx: number): ProviderConfig {
   const baseUrl = apiStyleRaw === "mock" ? "" : str(v.baseUrl, `providers[${idx}].baseUrl`);
   const apiKeyEnv =
     apiStyleRaw === "mock" ? undefined : str(v.apiKeyEnv, `providers[${idx}].apiKeyEnv`);
-  return { name, apiStyle: apiStyleRaw, baseUrl, apiKeyEnv };
+  const out: ProviderConfig = { name, apiStyle: apiStyleRaw, baseUrl, apiKeyEnv };
+  if (v.maxTokensParam !== undefined) {
+    if (v.maxTokensParam !== "max_tokens" && v.maxTokensParam !== "max_completion_tokens") {
+      throw new ConfigError(
+        `providers[${idx}].maxTokensParam must be "max_tokens" or "max_completion_tokens".`,
+      );
+    }
+    out.maxTokensParam = v.maxTokensParam;
+  }
+  const maxOutput = num(v.maxOutput, `providers[${idx}].maxOutput`, { optional: true, min: 1 });
+  if (maxOutput !== undefined) out.maxOutput = maxOutput;
+  return out;
 }
 
 function validateRole(v: unknown, idx: number): RoleConfig {

@@ -25,6 +25,12 @@ function paint(code: keyof typeof C, text: string): string {
   return useColor ? `${C[code]}${text}${C.reset}` : text;
 }
 
+/** Visible length without ANSI escape sequences. */
+export function stripAnsi(s: string): string {
+  // eslint-disable-next-line no-control-regex
+  return s.replace(/\x1b\[[0-9;]*m/g, "");
+}
+
 export const fmt = {
   bold: (t: string) => paint("bold", t),
   dim: (t: string) => paint("dim", t),
@@ -51,5 +57,24 @@ export const log = {
   banner: (text: string) => {
     const bar = "═".repeat(text.length + 4);
     console.log(fmt.bold(fmt.cyan(`╔${bar}╗\n║  ${text}  ║\n╚${bar}╝`)));
+  },
+  /**
+   * A rounded info panel: title in the top border, `key  value` rows
+   * (keys aligned), footer text in the bottom border.
+   */
+  panel: (title: string, rows: Array<[string, string]>, footer?: string) => {
+    const keyW = Math.max(...rows.map(([k]) => stripAnsi(k).length));
+    const lines = rows.map(([k, v]) => `${fmt.dim(k)}${" ".repeat(keyW - stripAnsi(k).length)}  ${v}`);
+    const inner = Math.max(
+      stripAnsi(title).length + 2,
+      footer !== undefined ? stripAnsi(footer).length + 2 : 0,
+      ...lines.map((l) => stripAnsi(l).length),
+    );
+    const top = `╭─ ${fmt.bold(fmt.cyan(title))} ${"─".repeat(Math.max(1, inner - stripAnsi(title).length - 2))}╮`;
+    const bottom = footer !== undefined
+      ? `╰─ ${fmt.green(footer)} ${"─".repeat(Math.max(1, inner - stripAnsi(footer).length - 2))}╯`
+      : `╰${"─".repeat(inner + 2)}╯`;
+    const body = lines.map((l) => `│ ${l}${" ".repeat(Math.max(0, inner - stripAnsi(l).length))} │`);
+    console.log([top, ...body, bottom].join("\n"));
   },
 };
