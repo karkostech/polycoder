@@ -8,9 +8,9 @@ import { runBuildPhase, runPlanPhase, AgentContext } from "./agent.js";
 import { Blackboard } from "./blackboard.js";
 import { BudgetTracker, createLimiter } from "./budget.js";
 import { runIntegrator } from "./integrator.js";
-import { ensureRepo, currentHead, mergeBranch, commitAll, removeWorktree, abortMerge } from "./git.js";
+import { ensureRepo, currentHead, mergeBranch, commitAll, removeWorktree, abortMerge, git } from "./git.js";
 import { writeReport } from "./report.js";
-import { nowStamp } from "./fsutil.js";
+import { nowStamp, pathExists } from "./fsutil.js";
 import { ProjectConfig, RunResult, Usage } from "./types.js";
 
 export interface OrchestratorOptions {
@@ -42,6 +42,47 @@ export async function orchestrate(cfg: ProjectConfig, opts: OrchestratorOptions)
     reportPath: "",
     success: false,
   };
+
+  // Safety guard: never run on a dirty working tree. The landing commit uses
+  // `git add -A`, which would sweep the user's uncommitted work into the run
+  // commit — and agents branch from HEAD, so uncommitted edits would silently
+  // not be part of the build. (.agents/ is exempt: it is our own blackboard.)
+  const head = await git(["rev-parse", "--verify", "HEAD"], opts.projectRoot, { allowFail: true });
+  if (head.stdout.trim()) {
+    const st = await git(["status", "--porcelain"], opts.projectRoot);
+    const dirty = st.stdout
+      .split("\n")
+      .filter((l) => l.trim())
+      .map((l) => l.slice(3).replace(/^"|"$/g, ""))
+      .filter((p) => !p.startsWith(".agents/"));
+    if (dirty.length > 0) {
+      throw new Error(
+        `working tree has ${dirty.length} uncommitted change(s) outside .agents/ (e.g. ${dirty.slice(0, 3).join(", ")}). ` +
+          `Agents branch from HEAD and the run ends by committing everything — commit or stash your changes first.`,
+      );
+    }
+  }
+
+  // Self-heal after crashed/interrupted runs: drop stale worktree dirs and
+  // prune worktree metadata, so a leftover .agents/worktrees/<role> from a
+  // previous run is never silently reused (it would contaminate this run).
+  await git(["worktree", "prune"], opts.projectRoot, { allowFail: true });
+  await fs
+    .rm(path.join(opts.projectRoot, ".agents", "worktrees"), { recursive: true, force: true })
+    .catch(() => {});
+
+  // Archive the previous run's journals + contracts: agents must start from a
+  // clean blackboard — stale contracts would otherwise leak into prompts and
+  // poison cross-role interfaces. History is kept under .agents/archive/.
+  const agentsDir = path.join(opts.projectRoot, ".agents");
+  const archiveDir = path.join(agentsDir, "archive", `before-${runId}`);
+  for (const sub of ["status", "contracts"]) {
+    const srcDir = path.join(agentsDir, sub);
+    if (await pathExists(srcDir)) {
+      await fs.mkdir(archiveDir, { recursive: true });
+      await fs.rename(srcDir, path.join(archiveDir, sub));
+    }
+  }
 
   await board.init();
   await board.appendStatus("orchestrator", `**RUN ${runId}** — task: ${cfg.task.slice(0, 200)} (mode: ${cfg.mode}, roles: ${cfg.roles.map((r) => r.name).join(", ")})`);
@@ -110,7 +151,7 @@ export async function orchestrate(cfg: ProjectConfig, opts: OrchestratorOptions)
     try {
       const outcome = await mergeBranch(opts.projectRoot, integrationBranch);
       if (outcome.ok) {
-        await commitAll(opts.projectRoot, `polycoder run ${runId}: ${cfg.task.slice(0, 60)}`);
+        await commitAll(opts.projectRoot, `chalkcode run ${runId}: ${cfg.task.slice(0, 60)}`);
         run.success = true;
         emit(`result landed on "${baseBranch}"`);
       } else {

@@ -1,5 +1,5 @@
 /**
- * PolyCoder — core shared types.
+ * ChalkCode — core shared types.
  */
 
 export type StrategyMode = "single" | "multi";

@@ -14,7 +14,7 @@ export function buildRoleSystemPrompt(cfg: ProjectConfig, role: RoleConfig, mode
     .map((r) => `- ${r.name}: ${r.description}`)
     .join("\n");
 
-  return `You are the "${role.name}" coding agent in a multi-agent build system called PolyCoder.
+  return `You are the "${role.name}" coding agent in a multi-agent build system called ChalkCode.
 Model: ${model}. Role: ${role.description}.
 
 ${scopeLine}
@@ -45,7 +45,7 @@ Now produce the JSON answer with the complete implementation of your part (${rol
 }
 
 export function buildIntegratorSystemPrompt(cfg: ProjectConfig, model: string, extra?: string): string {
-  return `You are the INTEGRATOR agent in PolyCoder. Model: ${model}.
+  return `You are the INTEGRATOR agent in ChalkCode. Model: ${model}.
 Several role agents just built different parts of the same project in parallel, each in its own git branch. All branches are now merged into the working tree.
 
 Your job:
