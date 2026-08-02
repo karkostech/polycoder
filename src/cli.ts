@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 /**
- * PolyCoder CLI — multi-model AI coding orchestrator.
+ * ChalkCode CLI — multi-model AI coding orchestrator.
  *
  * Commands:
- *   polycoder init [--demo] [--mode single|multi] [--task "..."]
- *   polycoder run [--keep-worktrees] [--no-color]
- *   polycoder doctor
- *   polycoder report
+ *   chalkcode init [--demo] [--mode single|multi] [--task "..."]
+ *   chalkcode run [--keep-worktrees] [--no-color]
+ *   chalkcode doctor
+ *   chalkcode report
  */
 import path from "node:path";
 import { promises as fs } from "node:fs";
@@ -65,7 +65,7 @@ function parseArgs(argv: string[]): ParsedArgs {
 
 function demoConfig(task?: string): ProjectConfig {
   return {
-    projectName: "polycoder-demo",
+    projectName: "chalkcode-demo",
     mode: "multi",
     providers: [{ name: "mock", apiStyle: "mock", baseUrl: "" }],
     roles: [
@@ -172,7 +172,7 @@ function templateConfig(mode: "single" | "multi", task?: string): ProjectConfig 
   return base;
 }
 
-const ENV_EXAMPLE = `# PolyCoder API keys — one per provider you use.
+const ENV_EXAMPLE = `# ChalkCode API keys — one per provider you use.
 # This file is gitignored. Never commit real keys.
 OPENAI_API_KEY=
 ANTHROPIC_API_KEY=
@@ -206,25 +206,25 @@ async function cmdInit(flags: Map<string, string | boolean>, cwd: string): Promi
 
   if (demo) {
     log.ok(`Created ${CONFIG_FILE} (demo mode — offline mock provider, no API keys needed).`);
-    log.dim("Run it with:  polycoder run");
+    log.dim("Run it with:  chalkcode run");
   } else {
     log.ok(`Created ${CONFIG_FILE} (${mode} mode) and .env.example.`);
     log.dim("Next steps:");
     log.dim("  1. Copy .env.example to .env and fill in your API keys");
     log.dim(`  2. Edit ${CONFIG_FILE}: models, roles, scopes, task`);
-    log.dim("  3. polycoder run");
+    log.dim("  3. chalkcode run");
   }
   return 0;
 }
 
 async function cmdDoctor(cwd: string): Promise<number> {
-  log.section("PolyCoder doctor");
+  log.section("ChalkCode doctor");
   let problems = 0;
 
   if (await isGitInstalled()) {
     log.ok("git is installed");
   } else {
-    log.error("git is NOT installed or not on PATH — PolyCoder needs it for worktrees.");
+    log.error("git is NOT installed or not on PATH — ChalkCode needs it for worktrees.");
     problems++;
   }
 
@@ -235,7 +235,7 @@ async function cmdDoctor(cwd: string): Promise<number> {
   }
 
   if (!(await pathExists(path.join(cwd, CONFIG_FILE)))) {
-    log.error(`no ${CONFIG_FILE} found — run "polycoder init".`);
+    log.error(`no ${CONFIG_FILE} found — run "chalkcode init".`);
     return 1;
   }
 
@@ -263,13 +263,16 @@ async function cmdDoctor(cwd: string): Promise<number> {
 
   for (const p of cfg.providers) {
     log.dim(`provider ${p.name}: style=${p.apiStyle}${p.baseUrl ? ` base=${p.baseUrl}` : ""}`);
+    if (p.baseUrl && !p.baseUrl.startsWith("https://")) {
+      log.warn(`provider ${p.name}: baseUrl is not HTTPS — API keys would be sent unencrypted.`);
+    }
   }
 
   if (problems > 0) {
     log.warn(`${problems} problem(s) found.`);
     return 1;
   }
-  log.ok("everything looks ready — run: polycoder run");
+  log.ok("everything looks ready — run: chalkcode run");
   return 0;
 }
 
@@ -296,7 +299,7 @@ async function cmdRun(flags: Map<string, string | boolean>, cwd: string): Promis
     return 1;
   }
 
-  log.banner(`PolyCoder — ${cfg.projectName}`);
+  log.banner(`ChalkCode — ${cfg.projectName}`);
   log.dim(`task: ${cfg.task.slice(0, 120)}${cfg.task.length > 120 ? "…" : ""}`);
   log.dim(`mode: ${cfg.mode} · roles: ${cfg.roles.map((r) => r.name).join(", ")} · concurrency: ${cfg.concurrency}`);
 
@@ -359,14 +362,14 @@ async function cmdReport(cwd: string): Promise<number> {
 }
 
 function printHelp(): void {
-  console.log(`polycoder — multi-model AI coding orchestrator
+  console.log(`chalkcode — multi-model AI coding orchestrator
 
 Usage:
-  polycoder init [--demo] [--mode single|multi] [--task "what to build"]
-  polycoder run [--keep-worktrees]
-  polycoder doctor
-  polycoder report
-  polycoder --help | --version
+  chalkcode init [--demo] [--mode single|multi] [--task "what to build"]
+  chalkcode run [--keep-worktrees]
+  chalkcode doctor
+  chalkcode report
+  chalkcode --help | --version
 
 How it works:
   1. init writes agents.config.json (strategy: one model for everything,
