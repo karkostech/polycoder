@@ -1,6 +1,6 @@
-# PolyCoder
+# ChalkCode
 
-[![CI](https://github.com/karkostech/polycoder/actions/workflows/ci.yml/badge.svg)](https://github.com/karkostech/polycoder/actions/workflows/ci.yml)
+[![CI](https://github.com/karol-kosciolek/chalkcode/actions/workflows/ci.yml/badge.svg)](https://github.com/karol-kosciolek/chalkcode/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Node.js ≥ 20](https://img.shields.io/badge/node-%E2%89%A520-339933)](https://nodejs.org)
 [![Zero runtime dependencies](https://img.shields.io/badge/runtime%20deps-0-blue)](package.json)
@@ -27,13 +27,13 @@ task ──► ┌─────────────┐   plan     ┌─�
         └──────────────────┘    └─────────────┘
 ```
 
-## Why PolyCoder exists
+## Why ChalkCode exists
 
 Coding agents today are soloists: one model, one context window, one long sequential session. Real projects aren't like that — they're frontend **and** backend **and** database **and** glue, and no single model is best at all of it. Running several agents naively makes things worse: they trip over each other's files, burn tokens reading each other's code, and nobody puts the pieces together at the end.
 
-PolyCoder was built around four observations:
+ChalkCode was built around four observations:
 
-- **Different models are good at different things.** One model might write the cleanest UI, another the most careful backend logic, a third the tightest SQL. PolyCoder lets you assign each domain to its strongest model — or run everything on one model, still fanned out into parallel agents.
+- **Different models are good at different things.** One model might write the cleanest UI, another the most careful backend logic, a third the tightest SQL. ChalkCode lets you assign each domain to its strongest model — or run everything on one model, still fanned out into parallel agents.
 - **Agents shouldn't read each other's code.** Reading another agent's half-finished code is how you get wrong assumptions and a melting context window. Instead, every agent publishes a short journal and precise **interface contracts** to a shared markdown blackboard (`.agents/`). Agents coordinate through documents, not through code archaeology — massively fewer tokens, far less confusion.
 - **Parallel work needs isolation.** Each agent gets its own `git worktree` and branch. Nobody blocks anybody, nothing is half-overwritten, and merging happens exactly once — at the end, under control of the integrator.
 - **You should know what happened.** "The AI did stuff" is not an acceptable outcome. Every run ends with a detailed markdown report: which agent did what, which files changed, how many tokens were spent, what it cost, and what the integrator fixed.
@@ -42,30 +42,30 @@ The goal: a build that is **faster** (parallel instead of sequential), **cheaper
 
 ## Install
 
-**Prerequisites:** [Node.js ≥ 20](https://nodejs.org) and [git](https://git-scm.com). PolyCoder has **zero runtime dependencies** — nothing else to install.
+**Prerequisites:** [Node.js ≥ 20](https://nodejs.org) and [git](https://git-scm.com). ChalkCode has **zero runtime dependencies** — nothing else to install.
 
 ```sh
-git clone https://github.com/karkostech/polycoder.git
-cd polycoder
+git clone https://github.com/karol-kosciolek/chalkcode.git
+cd chalkcode
 npm install
 npm run build
 npm link
 ```
 
-The last command, `npm link`, puts the `polycoder` command on your PATH. Type it **exactly as shown — with no arguments**:
+The last command, `npm link`, puts the `chalkcode` command on your PATH. Type it **exactly as shown — with no arguments**:
 
-> ⚠️ **Do not run `npm link polycoder` or `npm install -g polycoder`.** The name `polycoder` on the npm registry belongs to a different, unrelated package — installing it will fail (and it is not this project). PolyCoder is installed **from source** (this repo), not from npm.
+> ⚠️ **Do not add arguments — `npm link chalkcode` is wrong.** With an argument, npm tries to fetch that package from the npm registry instead of linking this repo (today `chalkcode` is not published there, so it just errors out). ChalkCode is installed **from source** (this repo).
 
 Verify the installation:
 
 ```sh
-polycoder --version
-polycoder --help
+chalkcode --version
+chalkcode --help
 ```
 
 > **Windows note:** works in PowerShell, CMD and Git Bash. **Don't want `npm link`?** Run it as `node dist/src/cli.js <command>` from the repo directory instead.
 >
-> **Uninstall:** `npm unlink -g polycoder` (or `npm rm -g polycoder`), then delete the clone.
+> **Uninstall:** `npm unlink -g chalkcode` (or `npm rm -g chalkcode`), then delete the clone.
 
 ## Quick start (offline demo, no API keys)
 
@@ -73,8 +73,8 @@ Try the full pipeline without spending a cent — the deterministic mock provide
 
 ```sh
 mkdir my-app && cd my-app
-polycoder init --demo
-polycoder run
+chalkcode init --demo
+chalkcode run
 ```
 
 You get a working todo app — boot it with `npm start` and open http://localhost:3000. Then inspect `.agents/` to see the contracts, journals and the run report.
@@ -84,10 +84,10 @@ You get a working todo app — boot it with `npm start` and open http://localhos
 ### 1. Initialize a project
 
 ```sh
-polycoder init                    # template config, "multi" strategy
-polycoder init --mode single      # template config, one model for everything
-polycoder init --demo             # offline mock config (no keys needed)
-polycoder init --task "Build …"   # pre-fill the task
+chalkcode init                    # template config, "multi" strategy
+chalkcode init --mode single      # template config, one model for everything
+chalkcode init --demo             # offline mock config (no keys needed)
+chalkcode init --task "Build …"   # pre-fill the task
 ```
 
 This creates:
@@ -147,9 +147,9 @@ Key config fields:
 ### 4. Validate, run, inspect
 
 ```sh
-polycoder doctor      # checks git, config, API keys — fix what it flags
-polycoder run         # plan → parallel build → integrate → land on your branch
-polycoder report      # print the latest run report
+chalkcode doctor      # checks git, config, API keys — fix what it flags
+chalkcode run         # plan → parallel build → integrate → land on your branch
+chalkcode report      # print the latest run report
 ```
 
 `run` flags:
@@ -196,7 +196,7 @@ Models never touch the filesystem directly. They return one JSON object:
 }
 ```
 
-PolyCoder validates every op (paths are confined to the project and to the role's `scope`, traversal is blocked), applies them to the role's worktree, and publishes notes/contracts to the blackboard.
+ChalkCode validates every op (paths are confined to the project and to the role's `scope`, traversal is blocked), applies them to the role's worktree, and publishes notes/contracts to the blackboard.
 
 ## Troubleshooting
 
@@ -216,7 +216,7 @@ npm test
 npm run cli -- --help
 ```
 
-`npm run build` compiles TypeScript to `dist/`; `npm test` builds and runs the 27 unit/e2e tests (node:test, fully offline).
+`npm run build` compiles TypeScript to `dist/`; `npm test` builds and runs the 29 unit/e2e tests (node:test, fully offline).
 
 ## License
 
