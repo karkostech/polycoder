@@ -27,38 +27,47 @@ npm link
 
 > **Uninstall:** `npm unlink -g chalkcode`, then delete the clone.
 
-## Use it — 3 steps
+## Use it — 2 steps
 
-**1. Once — store your defaults (optional but recommended):**
+**1. Once — store your API key(s):**
 
 ```sh
 chalkcode setup
 ```
 
-Pick your default provider (OpenAI / Anthropic / Moonshot / custom), default model, paste your API key once. Saved to `~/.chalkcode/config.json` — every next project pre-fills from here.
+Pick a model from the list — **GPT · Claude · Gemini · Grok · Kimi · DeepSeek · Qwen · GLM** — and paste its API key. Nothing else to configure: no URLs, no model IDs, no provider plumbing. Saved to `~/.chalkcode/config.json`, reused by every project (run `setup` again to store keys for more models).
 
-**2. In your project folder — create the project:**
+**2. In your project folder — build:**
 
 ```sh
 mkdir my-app && cd my-app
-chalkcode init
-```
-
-The wizard asks: what to build → **1** one model for everything or **2** a different model per role (frontend / backend / database / integrator). Every question has a default, so Enter-Enter-Enter works; missing API keys are asked for right there and written to `.env` (gitignored).
-
-**3. Build:**
-
-```sh
 chalkcode run
 ```
 
-Agents work in parallel, the integrator wires everything, and the result lands as **one commit** on your branch (undo anytime with `git reset --hard HEAD~1`). See what happened:
+First run asks two things: what to build, and **1** one model for everything or **2** a different model per role (frontend / backend / database / integrator — you pick each from the same list). Keys from `setup` are reused automatically; a missing one is asked for right there (paste key → `.env`, gitignored). Then the agents work in parallel, the integrator wires everything, and the result lands as **one commit** on your branch (undo anytime with `git reset --hard HEAD~1`). See what happened:
 
 ```sh
 chalkcode report
 ```
 
-That's it. No config to hand-edit unless you want to.
+That's it. No config to hand-edit unless you want to. (`chalkcode init` re-answers the same questions explicitly; `chalkcode doctor` checks git/config/keys anytime.)
+
+## Models
+
+The wizard offers a fixed catalog — pick from the list, paste the key, done. Model IDs are curated and updated with releases:
+
+| # | Model | ID used | API key env var |
+|---|---|---|---|
+| 1 | **GPT** | `gpt-5.5` | `OPENAI_API_KEY` |
+| 2 | **Claude** | `claude-sonnet-5` | `ANTHROPIC_API_KEY` |
+| 3 | **Gemini** | `gemini-3.5-flash` | `GEMINI_API_KEY` |
+| 4 | **Grok** | `grok-4.3` | `XAI_API_KEY` |
+| 5 | **Kimi** | `kimi-k2.7-code` | `MOONSHOT_API_KEY` |
+| 6 | **DeepSeek** | `deepseek-v4-pro` | `DEEPSEEK_API_KEY` |
+| 7 | **Qwen** | `qwen3-coder-plus` | `DASHSCOPE_API_KEY` |
+| 8 | **GLM** | `glm-4.7` | `GLM_API_KEY` |
+
+Power users can still hand-edit `agents.config.json` afterwards — the catalog is a convenience layer, not a restriction.
 
 ## What the wizard creates
 
@@ -97,7 +106,7 @@ Key config fields you can tweak later:
 
 ```sh
 npm run build
-npm test   # 34 unit/e2e tests, node:test, fully offline
+npm test   # 38 unit/e2e tests, node:test, fully offline
 ```
 
 ## License

@@ -17,12 +17,12 @@ typescript, nodejs, ai-coding, agentic-workflow
 
 ## Included in this repo
 - [x] MIT `LICENSE`
-- [x] `README.md` with badges, 3-step quick start, config reference
-- [x] CI on GitHub Actions: `.github/workflows/ci.yml` — build + 34 tests + offline CLI smoke test, matrix Node 20/22/24 × ubuntu/windows/macos
+- [x] `README.md` with badges, 2-step quick start, model catalog, config reference
+- [x] CI on GitHub Actions: `.github/workflows/ci.yml` — build + 38 tests + offline CLI smoke test, matrix Node 20/22/24 × ubuntu/windows/macos
 - [x] `.gitignore` (node_modules, dist, .env, .agents)
 - [x] `package.json` with keywords, license, engines, bin
 
 ## Recommended next settings
 - Protect `main`: require the CI check to pass before merging.
 - Add a screenshot of `chalkcode run` output as the social preview image.
-- [x] Releases: `v0.1.0` (2026-08-02), `v0.2.0` (2026-08-02) — interactive setup wizard.
+- [x] Releases: `v0.1.0` (2026-08-02), `v0.2.0` (2026-08-02) — interactive setup wizard; `v0.3.0` (2026-08-02) — fixed 8-model catalog (GPT, Claude, Gemini, Grok, Kimi, DeepSeek, Qwen, GLM): pick from list, paste key, done; prettier terminal UI (summary panels); output-cap continuations fix for large builds.
