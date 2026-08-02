@@ -58,7 +58,7 @@ test("pathAllowedByScope respects prefixes", () => {
 });
 
 test("applyOps writes, deletes, skips out-of-scope and blocks traversal", async () => {
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "polycoder-ops-"));
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "chalkcode-ops-"));
   const res = await applyOps(
     dir,
     [

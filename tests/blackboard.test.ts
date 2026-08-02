@@ -6,7 +6,7 @@ import path from "node:path";
 import { Blackboard } from "../src/blackboard.js";
 
 test("blackboard journals, contracts and per-role context", async () => {
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "polycoder-board-"));
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "chalkcode-board-"));
   const board = new Blackboard(dir);
   await board.init();
 
@@ -43,7 +43,7 @@ test("blackboard journals, contracts and per-role context", async () => {
 });
 
 test("empty blackboard context says so", async () => {
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "polycoder-board-"));
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "chalkcode-board-"));
   const board = new Blackboard(dir);
   const ctx = await board.contextFor("nobody");
   assert.match(ctx, /empty/i);
