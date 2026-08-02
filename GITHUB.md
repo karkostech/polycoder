@@ -25,4 +25,4 @@ typescript, nodejs, ai-coding, agentic-workflow
 ## Recommended next settings
 - Protect `main`: require the CI check to pass before merging.
 - Add a screenshot of `chalkcode run` output as the social preview image.
-- [x] First release: `v0.1.0` published (2026-08-02). Next: `v0.2.0` — interactive setup wizard.
+- [x] Releases: `v0.1.0` (2026-08-02), `v0.2.0` (2026-08-02) — interactive setup wizard.
