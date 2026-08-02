@@ -62,7 +62,7 @@ export async function ensureRepo(cwd: string): Promise<string> {
   if (!(await isInsideRepo(cwd))) {
     await git(["init", "-b", "main"], cwd);
   }
-  // Keep polycoder's internal worktrees out of commits, even when the project
+  // Keep chalkcode's internal worktrees out of commits, even when the project
   // has no .gitignore entry for them. Uses the repo-local exclude file so the
   // user's own .gitignore is never touched. Without this, `git add -A` records
   // the live worktrees as gitlink entries.
@@ -74,7 +74,7 @@ export async function ensureRepo(cwd: string): Promise<string> {
     const existing = await fs.readFile(excludePath, "utf8").catch(() => "");
     if (!existing.split("\n").some((l) => l.trim() === excludeLine)) {
       await fs.mkdir(path.dirname(excludePath), { recursive: true });
-      await fs.appendFile(excludePath, `\n# polycoder internals\n${excludeLine}\n`, "utf8");
+      await fs.appendFile(excludePath, `\n# chalkcode internals\n${excludeLine}\n`, "utf8");
     }
   } catch {
     // Non-fatal: worst case the worktree gitlinks get committed.
@@ -84,7 +84,7 @@ export async function ensureRepo(cwd: string): Promise<string> {
   if (!hasCommit.stdout.trim()) {
     await git(["add", "-A"], cwd);
     await git(
-      ["-c", "user.name=polycoder", "-c", "user.email=polycoder@local", "commit", "--allow-empty", "-m", "chore: initial commit"],
+      ["-c", "user.name=chalkcode", "-c", "user.email=chalkcode@local", "commit", "--allow-empty", "-m", "chore: initial commit"],
       cwd,
     );
   }
@@ -124,7 +124,7 @@ export async function commitAll(cwd: string, message: string): Promise<boolean> 
   await git(["add", "-A"], cwd);
   const status = await git(["status", "--porcelain"], cwd);
   if (!status.stdout.trim()) return false;
-  await git(["-c", "user.name=polycoder", "-c", "user.email=polycoder@local", "commit", "-m", message], cwd);
+  await git(["-c", "user.name=chalkcode", "-c", "user.email=chalkcode@local", "commit", "-m", message], cwd);
   return true;
 }
 
@@ -139,7 +139,7 @@ export async function mergeBranch(cwd: string, branch: string): Promise<MergeOut
   // ident on several git versions and dies without one (e.g. fresh CI runners
   // with no global git config). Never rely on ambient git config.
   const r = await git(
-    ["-c", "user.name=polycoder", "-c", "user.email=polycoder@local", "merge", "--no-ff", "--no-commit", branch],
+    ["-c", "user.name=chalkcode", "-c", "user.email=chalkcode@local", "merge", "--no-ff", "--no-commit", branch],
     cwd,
     { allowFail: true },
   );

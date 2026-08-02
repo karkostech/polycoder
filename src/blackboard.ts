@@ -8,7 +8,7 @@
  *     report-<stamp>.md    — final run report
  *
  * Agents read contracts + other agents' journals instead of reading each
- * other's code — that is the token-saving core of PolyCoder.
+ * other's code — that is the token-saving core of ChalkCode.
  */
 import path from "node:path";
 import { promises as fs } from "node:fs";

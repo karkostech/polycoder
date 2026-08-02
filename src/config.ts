@@ -234,7 +234,7 @@ export async function loadConfig(cwd: string): Promise<ProjectConfig> {
   const file = path.join(cwd, CONFIG_FILE);
   if (!(await pathExists(file))) {
     throw new ConfigError(
-      `No ${CONFIG_FILE} found in ${cwd}.\nRun "polycoder init" to create one.`,
+      `No ${CONFIG_FILE} found in ${cwd}.\nRun "chalkcode init" to create one.`,
     );
   }
   return validateConfig(await readJsonFile(file));
